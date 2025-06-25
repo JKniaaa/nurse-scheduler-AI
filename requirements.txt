@@ -1,0 +1,8 @@
+openai
+anthropic
+google-cloud-aiplatform
+flask
+pyyaml
+streamlit
+requests
+dotenv
