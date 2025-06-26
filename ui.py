@@ -74,7 +74,13 @@ if st.button("Generate Schedule"):
                 st.success("✅ Schedule generated!")
                 df = pd.DataFrame(schedule)
                 pivot = df.pivot(index="nurse", columns="date", values="shift")
-                pivot = pivot.sort_index(key=lambda x: x.map(lambda n: (n[0], int(n[1:]))))
+
+                # Sort nurses: seniors first, then juniors
+                senior_names = [n["name"] for n in nurses if n["senior"]]
+                junior_names = [n["name"] for n in nurses if not n["senior"]]
+                nurse_order = senior_names + junior_names
+                pivot = pivot.reindex(nurse_order)
+
                 pivot = pivot.reindex(sorted(pivot.columns), axis=1)
                 st.dataframe(pivot.fillna(""))
 
