@@ -1,99 +1,140 @@
-# prompts.py
 import pandas as pd
 
 ROOT_PROMPT = """
-You are a professional nurse roster scheduler. Always enforce these HARD rules:
+You are NurseRosterScheduler, a professional nurse‑rostering engine.
+You MUST enforce all HARD rules without exception. Higher‑numbered rules have lower priority.
 
-1. This schedule covers {num_days} days from {start_date} to {end_date}, inclusive.  
-   – **You must generate one entry for every date in that range; do not skip or omit any date.**  
-2. Each nurse must be assigned exactly one of [AM, PM, Night, REST] on each of those {num_days} days.  
-2.a You must assign exactly one shift for every nurse on every date between {start_date} and {end_date}.  
-2.b No nurse may appear more than once for the same date.  
-3. Each nurse must work no more than 42 hours per week. If needed, assign REST to stay under this cap.  
-4. Each shift (AM, PM, Night) must have at least 4 nurses, including at least 1 senior.  
-   – REST does *not* count toward coverage.  
-5. If a nurse works on a weekend, they rest on the same weekday the following weekend.  
-6. Nurses on medical leave (MC) must be assigned REST on those days.
-7. No nurse may be assigned REST for all {num_days} days. Every nurse must be scheduled to work at least one [AM, PM, Night] shift.
+DYNAMIC INPUTS:
+- Period: {start_date} to {end_date} ({num_days} days)
+- Nurses: {num_senior} senior ({senior_ids}), {num_junior} junior ({junior_ids})
+- Total nurses: {num_nurses}
+- Total entries: {total_entries}
+- Min AM coverage: {min_am_pct}%
+- Senior Min AM coverage: {snr_min_am_pct}%
+- Weekly hours: min {weekly_hours}h, max 42h
+- Medical leaves: {num_mc} days
+  {medical_leaves_block}
+- Shift preferences:
+  {shift_prefs_block}
 
-Shift durations:
-- AM: 7 hours  
-- PM: 7 hours  
-- Night: 10 hours  
-- REST: 0 hours  
+WEEK DEFINITION:
+- Weeks start on {start_date}: Days 1–7 = Week 1, Days 8–14 = Week 2, etc.
 
-IMPORTANT:
-- Number of entries must equal (#nurses × #days) = {total_entries}.  
-- **Every** (nurse, date) pair from {start_date} to {end_date} must appear exactly once—no gaps, no omissions.  
-- Nurses should work as many days as possible, only REST when required by the 42-hour cap, the weekend-rest rule, or MC.  
-- Diversify shift types per nurse; avoid repetitive patterns.  
-- Distribute REST days reasonably.
+SHIFT DEFINITIONS (HARD):
+- AM: 07:00–14:00 (7 h)
+- PM: 14:00–21:00 (7 h)
+- Night: 21:00–07:00 (10 h)
+- REST: 00 h
+- MC: Medical Leave (00 h)
 
+HARD RULES (MUST ENFORCE):
+1. Complete Coverage:
+   - Exactly one assignment [AM, PM, Night, REST, MC] per nurse per day
+   - Total entries = total_entries
+   - Cover every date from start_date to end_date inclusive
+   - Each nurse must work ≥ 1 shift over the period
+   - No nurse may be REST every day
+   - No day may have all nurses on REST
 
-Example pattern (for any num_days starting at {start_date}):
-for i in 0 to {num_days} - 1:
-    date = {start_date} + i days
-    assign one of [AM, PM, Night, REST] to “Nurse A” for that date
+2. Minimum Staffing:
+   - Each AM/PM/Night shift must have ≥ 4 nurses
+   - Each shift must include ≥ 1 senior nurse
+   - REST/MC do NOT count toward shift coverage
 
-IMPORTANT:
-- You must literally loop from i = 0 to {num_days} - 1,  
-  setting date = {start_date} + i days,  
-  and produce an entry for every single (nurse, date) pair.  
-- Do not stop early—cover all {num_days} days.
+3. Work Limits:
+   - Strict limit: No nurse may exceed 42 h of AM/PM/Night shifts per week block (Day 1–7, Day 8–14, …).
+   - Each nurse must achieve ≥ weekly_hours of AM/PM/Night per week block
 
-SOFT constraints (adjustable by user; hard rules take priority):
-- AM shift ≥ {min_am_pct}% of staff daily  
-- Target: {weekly_hours}h per nurse per week  
-- Preference importance: {pref_weight}  
+4. Medical Leave Enforcement:
+   - Any nurse in medical_leaves on a date must be assigned “MC” (overrides all)
 
-IMPORTANT: Output must be pure JSON. Do NOT include any text, explanation, or markdown fences.  
-Only output this JSON object and nothing else:
+5. REST Enforcement:
+   - If assigning a working shift would push weekly hours > 42 h, assign REST instead
+   - No nurse may have > 2 consecutive REST days
+   - Each nurse must have ≥ 1 REST day per week block
+   - When multiple nurses require REST on the same day, rotate REST assignments evenly
 
-{
+6. Night-to-AM Safety:
+   - If Nurse X works Night shift on Day D → 
+     must assign REST or PM on Day D+1 (no AM)
+
+7. AM Coverage Fallback:
+   For each day, if AM coverage < {min_am_pct}% OR senior AM coverage < {snr_min_am_pct}%:
+     - AM% must be strictly greater than both PM% and Night% individually
+     - Senior AM% must be strictly greater than both Senior PM% and Senior Night% individually
+   [Where % = (shift_count/total_nurses)*100, Senior% = (seniors_in_shift/shift_count)*100]
+   [Calculations based on ACTIVE nurses only (excluding REST/MC)]
+
+SOFT CONSTRAINTS (OPTIMIZE):
+8. AM Targets:
+   - Preferred: AM% ≥ {min_am_pct}%
+   - Preferred: Senior AM% ≥ {snr_min_am_pct}%
+
+9. Weekend Rotation:
+   - If Nurse X works on Saturday of any week block → must REST on Saturday of the next week block
+   - If Nurse X works on Sunday of any week block → must REST on Sunday of the next week block
+
+10. Preference Fulfillment:
+   - Assign nurses to their preferred shifts where feasible, without violating any Hard rules
+
+OUTPUT REQUIREMENTS:
+- PURE JSON ONLY (no text, explanations, markdown, or code fences)
+- Use EXACT format:
+{{
   "s": [
-    ["S00","2025-07-01","AM"],  
-    …  
+    ["<nurse_id>", "<YYYY‑MM‑DD>", "<AM|PM|Night|REST|MC>"],
+    ...
   ]
-}
+}}
 """
 
-
-
 def build_prompt(user_inputs: dict) -> str:
-    """
-    Constructs the full prompt:
-    - Fills in ROOT_PROMPT placeholders.
-    - Lists nurse preferences.
-    """
-    # Calculate dynamic values
+    # --- 1. Validate required inputs ---
+    required = ["start_date", "end_date", "weekly_hours", "nurses"]
+    missing = [k for k in required if k not in user_inputs]
+    if missing:
+        raise KeyError(f"Missing required user_inputs keys: {missing}")
+
+    # --- 2. Compute date span ---
     start = user_inputs["start_date"]
     end   = user_inputs["end_date"]
     num_days = (pd.to_datetime(end) - pd.to_datetime(start)).days + 1
-    total_entries = num_days * len(user_inputs["nurses"])
 
-    # Fill ROOT_PROMPT
-    root = ROOT_PROMPT.format(
+    nurses = user_inputs["nurses"]
+    senior_ids = [n["name"] for n in nurses if n["senior"]]
+    junior_ids = [n["name"] for n in nurses if not n["senior"]]
+    num_senior = len(senior_ids)
+    num_junior = len(junior_ids)
+    num_nurses = len(nurses)
+
+    # --- 3. Medical leaves block ---
+    mc_entries = []
+    for n in nurses:
+        for d in n.get("mc_days", []):
+            mc_entries.append(f"- {n['name']} on {d}")
+    medical_leaves_block = "\n  ".join(mc_entries) if mc_entries else "None"
+    num_mc = len(mc_entries)
+
+    # --- 4. Shift preferences block ---
+    shift_prefs_block = "\n  ".join(
+        f"- {n['name']}: prefers {n.get('shift_pref', 'none')}" for n in nurses
+    ) if nurses else "None"
+
+    # --- 5. Build and return ---
+    return ROOT_PROMPT.format(
         start_date=start,
         end_date=end,
         num_days=num_days,
-        total_entries=total_entries,
+        num_nurses=num_nurses,
+        total_entries=num_nurses * num_days,
+        num_senior=num_senior,
+        senior_ids=", ".join(senior_ids),
+        num_junior=num_junior,
+        junior_ids=", ".join(junior_ids),
+        num_mc=num_mc,
+        medical_leaves_block=medical_leaves_block,
+        shift_prefs_block=shift_prefs_block,
+        weekly_hours=user_inputs["weekly_hours"],
         min_am_pct=user_inputs.get("min_am_pct", 60),
-        weekly_hours=user_inputs.get("weekly_hours", 40),
-        pref_weight=user_inputs.get("pref_weight", "medium")
+        snr_min_am_pct=user_inputs.get("snr_min_am_pct", 60)
     )
-
-    # Build nurse preference lines
-    prefs = []
-    for n in user_inputs["nurses"]:
-        name = n["name"]
-        role = "senior" if n["senior"] else "junior"
-        pref = n.get("shift_pref", "none")
-        mc   = n.get("mc_days", [])
-        prefs.append(f"- {name}: {role}, prefers {pref}, unavailable on {mc}")
-
-    user_section = (
-        f"Schedule from {start} to {end} ({num_days} days) for {len(user_inputs['nurses'])} nurses:\n"
-        + "\n".join(prefs)
-    )
-
-    return root + "\n\n" + user_section

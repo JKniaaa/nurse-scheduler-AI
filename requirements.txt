@@ -5,4 +5,5 @@ flask
 pyyaml
 streamlit
 requests
-dotenv
+python-dotenv
+xlsxwriter

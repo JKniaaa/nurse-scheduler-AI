@@ -22,7 +22,7 @@ from urllib3.util.retry import Retry
 
 logging.basicConfig(
     filename="scheduler.log",
-    filemode="w",
+    filemode="a",
     level=logging.DEBUG,
     format="%(asctime)s %(levelname)s %(message)s"
 )
@@ -174,8 +174,8 @@ def call_llm(prompt: str) -> Dict:
         payload = {
             "model": deepseek_model,
             "messages": [{"role": "user", "content": prompt}],
-            "temperature": 0.2,
-            "max_tokens": 7000,
+            "temperature": 0.1,
+            # "max_tokens": 7000,
             "stream": False
         }
 

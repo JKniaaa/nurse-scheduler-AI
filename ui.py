@@ -3,6 +3,8 @@ import requests
 import json
 import os
 import pandas as pd
+from utils.button import excel_download_button
+from utils.tables import make_schedule_table, nurse_summary_table
 
 # If you want to call your Flask service:
 FLASK_URL = os.getenv("FLASK_URL", "http://localhost:5000/schedule")
@@ -18,13 +20,14 @@ end_date   = col2.date_input("End date")
 
 # 2. Soft-rules
 min_am_pct    = st.slider("Min AM coverage (%)", 0, 100, 60)
+snr_min_am_pct    = st.slider("Senior Min AM coverage (%)", 0, 100, 60)
 weekly_hours  = st.number_input("Target weekly hours per nurse", min_value=0, max_value=80, value=40)
 pref_weight   = st.selectbox("Shift preference importance", ["low", "medium", "high"], index=1)
 
 # 3. Nurse counts input
 st.markdown("### Nurse Pool Configuration")
-num_seniors = st.number_input("Number of Senior Nurses", min_value=0, value=2, step=1)
-num_juniors = st.number_input("Number of Junior Nurses", min_value=0, value=3, step=1)
+num_seniors = st.number_input("Number of Senior Nurses", min_value=0, value=15, step=1)
+num_juniors = st.number_input("Number of Junior Nurses", min_value=0, value=10, step=1)
 
 # 4. Optional preferences template
 st.markdown("### Default Preferences")
@@ -54,6 +57,7 @@ if st.button("Generate Schedule"):
         "start_date": start_date.isoformat(),
         "end_date": end_date.isoformat(),
         "min_am_pct": min_am_pct,
+        "snr_min_am_pct": snr_min_am_pct,
         "weekly_hours": weekly_hours,
         "pref_weight": pref_weight,
         "nurses": nurses,
@@ -71,18 +75,36 @@ if st.button("Generate Schedule"):
             else:
                 # 6. Display schedule
                 schedule = data["schedule"]
+                if not schedule:
+                    st.error("No schedule returned.")
+                    st.stop()
+                
+                 # --- FIX: convert if needed ---
+                if schedule and isinstance(schedule[0], list):
+                    schedule = [
+                        {"nurse": n, "date": d, "shift": s}
+                        for n, d, s in schedule
+                    ]
                 st.success("✅ Schedule generated!")
-                df = pd.DataFrame(schedule)
-                pivot = df.pivot(index="nurse", columns="date", values="shift")
-
-                # Sort nurses: seniors first, then juniors
-                senior_names = [n["name"] for n in nurses if n["senior"]]
-                junior_names = [n["name"] for n in nurses if not n["senior"]]
-                nurse_order = senior_names + junior_names
-                pivot = pivot.reindex(nurse_order)
-
-                pivot = pivot.reindex(sorted(pivot.columns), axis=1)
+                pivot = make_schedule_table(schedule, nurses)
                 st.dataframe(pivot.fillna(""))
+
+                summary_df = nurse_summary_table(schedule, nurses)
+                st.markdown("### Nurse Assignment Summary")
+                st.dataframe(summary_df)
+
+                # summary table
+                excel_download_button(
+                    pivot.reset_index(),  # nurse names as first column
+                    filename="nurse_schedule.xlsx",
+                    label="Download schedule as Excel"
+                )
+
+                excel_download_button(
+                    summary_df,
+                    filename="nurse_summary.xlsx",
+                    label="Download summary as Excel"
+                )
 
                 # info
                 relaxed_note = data.get("relaxed_constraints", "No relaxation")

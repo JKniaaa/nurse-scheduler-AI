@@ -6,10 +6,11 @@ from dotenv import load_dotenv
 import json
 import logging
 from datetime import datetime
+import time
 
 logging.basicConfig(
     filename="backend.log",
-    filemode="w",
+    filemode="a",
     level=logging.DEBUG,
     format="%(asctime)s %(levelname)s %(message)s"
 )
@@ -58,6 +59,8 @@ def schedule():
             logging.info(f"\n=== Attempt: {stage['note']} ===")
 
             try:
+                start_time = time.time()
+
                 result = call_llm(prompt)
                 schedule = result.get("s") or result.get("schedule")
                 if not schedule:
@@ -70,10 +73,14 @@ def schedule():
                 # Try validating the schedule
                 validate_schedule(schedule, user_inputs)
 
+                elapsed = time.time()
+                logging.info(f"[TIMING] Solution found in {elapsed:.2f} seconds.")
+
                 # If valid, return result with relaxation info
                 return jsonify({
                     "schedule": schedule,
-                    "relaxed_constraints": stage["note"]
+                    "relaxed_constraints": stage["note"],
+                    "solve_time_seconds": round(elapsed, 2)
                 }), 200
 
             except RuntimeError as rte:
