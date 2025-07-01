@@ -174,7 +174,7 @@ def call_llm(prompt: str) -> Dict:
         payload = {
             "model": deepseek_model,
             "messages": [{"role": "user", "content": prompt}],
-            "temperature": 0.1,
+            "temperature": 0.3,
             # "max_tokens": 7000,
             "stream": False
         }

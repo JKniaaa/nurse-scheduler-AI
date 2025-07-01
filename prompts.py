@@ -1,7 +1,7 @@
 import pandas as pd
 
 ROOT_PROMPT = """
-You are NurseRosterScheduler, a professional nurse‑rostering engine.
+You are a professional nurse‑rostering engine.
 You MUST enforce all HARD rules without exception. Higher‑numbered rules have lower priority.
 
 DYNAMIC INPUTS:
@@ -79,6 +79,8 @@ SOFT CONSTRAINTS (OPTIMIZE):
 
 OUTPUT REQUIREMENTS:
 - PURE JSON ONLY (no text, explanations, markdown, or code fences)
+- Output ONLY the JSON object, nothing else.
+- DO NOT include any reasoning, explanations, or markdown.
 - Use EXACT format:
 {{
   "s": [
@@ -86,6 +88,9 @@ OUTPUT REQUIREMENTS:
     ...
   ]
 }}
+- DO NOT use simple repeating or round-robin patterns across nurses or days.
+- Schedules must vary between nurses and days, and must optimize for all constraints.
+- The schedule should not be a shifted version of the same sequence for each nurse.
 """
 
 def build_prompt(user_inputs: dict) -> str:
